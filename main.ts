@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 
 // One line: a kind, funny fortune for the houseplant on the windowsill.
 // Chosen against the judge's brief, in its own order: it is squarely a
@@ -40,15 +40,29 @@ if (text !== text.trim()) {
 if (/[\u0000-\u001f\u007f]/.test(text)) {
   throw new Error("entry must not contain control characters");
 }
+// Invisible characters the control check misses — non-breaking space,
+// zero-width marks, line/paragraph separators, BOM — would read as
+// padding to the judge while looking identical here.
+if (/[\u00a0\u200b-\u200f\u2028\u2029\ufeff]/.test(text)) {
+  throw new Error("entry must not contain invisible characters");
+}
 
 mkdirSync("/output", { recursive: true });
-writeFileSync("/output/entry.txt", text, "utf8");
+// Mode 0644 is set at creation as well as enforced below, so the entry
+// never briefly exists with a umask-dependent mode.
+writeFileSync("/output/entry.txt", text, { encoding: "utf8", mode: 0o644 });
 chmodSync("/output/entry.txt", 0o644);
 
 // Read it back and prove the file on disk is exactly the line: a write
 // that silently truncated, re-encoded or padded the entry would otherwise
-// ship a different text to the judge than the one gated above.
+// ship a different text to the judge than the one gated above. Also prove
+// the mode landed: chmodSync throws on failure, but a platform that
+// silently ignores it would leave a wrongly-permissioned entry file.
 const written = readFileSync("/output/entry.txt", "utf8");
 if (written !== text) {
   throw new Error("entry file does not match the gated line");
+}
+const mode = statSync("/output/entry.txt").mode & 0o777;
+if (mode !== 0o644) {
+  throw new Error(`entry file must be mode 0644, got 0${mode.toString(8)}`);
 }
